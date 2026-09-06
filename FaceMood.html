@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실시간 러셀 감정 모델 분석 AI</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkBg: '#090d16',
+                        cardBg: '#131c31',
+                        accent: '#6366f1'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- MediaPipe Face Mesh CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <style>
+        body {
+            background-color: #090d16;
+            color: #f8fafc;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        }
+        canvas {
+            transform: scaleX(-1);
+        }
+        /* 차트 캔버스는 반전 안 함 */
+        #russellChart {
+            transform: none !important;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-between p-3 md:p-6">
+    <!-- 헤더 영역 -->
+    <header class="w-full max-w-6xl flex flex-col md:flex-row items-center justify-between mb-5 pb-4 border-b border-slate-800">
+        <div class="flex items-center space-x-3 mb-3 md:mb-0">
+            <div class="bg-gradient-to-tr from-indigo-600 to-violet-500 p-3 rounded-2xl shadow-lg shadow-indigo-500/20">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+            </div>
+            <div>
+                <h1 class="text-xl md:text-2xl font-black tracking-tight bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent">실시간 러셀 감정 모델 분석 AI</h1>
+                <p class="text-xs text-slate-400 mt-0.5">MediaPipe FaceMesh 기반 고정밀 안면 랜드마크 트래킹 & 감정 원형 매핑</p>
+            </div>
+        </div>
+        <div id="status-badge" class="flex items-center space-x-2 bg-amber-500/10 text-amber-400 px-4 py-2 rounded-full text-xs font-semibold border border-amber-500/20 shadow-sm">
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+            <span id="status-text">웹캠 및 AI 모델 로딩 중...</span>
+        </div>
+    </header>
+
+    <!-- 메인 콘텐츠 영역 -->
+    <main class="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-5 flex-grow">
+        <!-- 웹캠 및 랜드마크 캔버스 영역 -->
+        <div class="lg:col-span-7 flex flex-col bg-cardBg rounded-3xl p-5 shadow-2xl border border-slate-800/80 backdrop-blur-xl">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    실시간 안면 랜드마크 트래킹
+                </h2>
+                <div class="flex items-center space-x-3 text-[11px] font-medium text-slate-400 bg-slate-900/60 px-3 py-1 rounded-full border border-slate-800">
+                    <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-pink-500 inline-block shadow-sm shadow-pink-500/50"></span>눈썹</span>
+                    <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-blue-400 inline-block shadow-sm shadow-blue-400/50"></span>눈</span>
+                    <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-cyan-400 inline-block shadow-sm shadow-cyan-400/50"></span>입술</span>
+                </div>
+            </div>
+            
+            <div class="relative w-full aspect-[4/3] bg-slate-950 rounded-2xl overflow-hidden flex items-center justify-center border border-slate-800/60 shadow-inner">
+                <video id="webcam" class="absolute inset-0 w-full h-full object-cover opacity-0" playsinline></video>
+                <canvas id="output_canvas" class="absolute inset-0 w-full h-full object-cover"></canvas>
+                <!-- 로딩 오버레이 -->
+                <div id="loading-overlay" class="absolute inset-0 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center space-y-3 z-10 transition-opacity duration-300">
+                    <div class="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                    <p class="text-sm font-medium text-slate-300">MediaPipe AI 모델 초기화 및 카메라 연결 중...</p>
+                </div>
+            </div>
+
+            <!-- 미세 분석 수치 바 (눈썹/눈/입) -->
+            <div class="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-800/80">
+                <!-- 눈썹 분석 -->
+                <div class="bg-slate-900/80 p-3 rounded-2xl border border-slate-800/60 shadow-sm">
+                    <div class="flex justify-between text-xs mb-1.5">
+                        <span class="text-pink-400 font-semibold">눈썹 상하위치</span>
+                        <span id="val-brow" class="font-bold font-mono">0.00</span>
+                    </div>
+                    <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden p-0.5 border border-slate-800">
+                        <div id="bar-brow" class="bg-gradient-to-r from-pink-600 to-pink-400 h-full w-1/2 rounded-full transition-all duration-150"></div>
+                    </div>
+                </div>
+                <!-- 눈 분석 -->
+                <div class="bg-slate-900/80 p-3 rounded-2xl border border-slate-800/60 shadow-sm">
+                    <div class="flex justify-between text-xs mb-1.5">
+                        <span class="text-blue-400 font-semibold">눈 개폐 크기</span>
+                        <span id="val-eye" class="font-bold font-mono">0.50</span>
+                    </div>
+                    <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden p-0.5 border border-slate-800">
+                        <div id="bar-eye" class="bg-gradient-to-r from-blue-600 to-blue-400 h-full w-1/2 rounded-full transition-all duration-150"></div>
+                    </div>
+                </div>
+                <!-- 입 분석 -->
+                <div class="bg-slate-900/80 p-3 rounded-2xl border border-slate-800/60 shadow-sm">
+                    <div class="flex justify-between text-xs mb-1.5">
+                        <span class="text-cyan-400 font-semibold">입꼬리 곡률</span>
+                        <span id="val-mouth" class="font-bold font-mono">0.00</span>
+                    </div>
+                    <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden p-0.5 border border-slate-800">
+                        <div id="bar-mouth" class="bg-gradient-to-r from-cyan-600 to-cyan-400 h-full w-1/2 rounded-full transition-all duration-150"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 러셀 감정 모델 산점도 및 상세 예측 영역 -->
+        <div class="lg:col-span-5 flex flex-col space-y-4">
+            <!-- 러셀 감정 원형 차트 카드 -->
+            <div class="bg-cardBg rounded-3xl p-5 shadow-2xl border border-slate-800/80 flex flex-col flex-grow backdrop-blur-xl">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        러셀 감정 원형 모델
+                    </h2>
+                    <span class="text-[11px] text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded-full border border-slate-800">X: 유쾌(Valence) / Y: 각성(Arousal)</span>
+                </div>
+                <div class="relative w-full h-64 sm:h-72 bg-slate-950/80 rounded-2xl p-3 border border-slate-800/60 flex items-center justify-center shadow-inner">
+                    <canvas id="russellChart"></canvas>
+                </div>
+            </div>
+
+            <!-- 현재 예측 감정 상태 카드 -->
+            <div class="bg-cardBg rounded-3xl p-5 shadow-2xl border border-slate-800/80 backdrop-blur-xl">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs text-slate-400 font-semibold">실시간 예측 감정 결과</span>
+                    <span id="emotion-code" class="text-xs font-mono bg-indigo-500/15 text-indigo-300 px-3 py-1 rounded-full border border-indigo-500/30 font-bold shadow-sm">Neutral</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div id="emotion-emoji" class="text-4xl p-3.5 bg-slate-950/90 rounded-2xl border border-slate-800/80 flex items-center justify-center shadow-inner">😐</div>
+                    <div class="flex-grow">
+                        <h3 id="emotion-title" class="text-lg font-black text-white">평온 / 무표정</h3>
+                        <p id="emotion-desc" class="text-xs text-slate-400 mt-0.5 leading-relaxed">안면 근육이 안정되어 있고 특별한 감정 자극이 없는 상태입니다.</p>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-slate-800/80 text-xs">
+                    <div class="bg-slate-900/80 px-3.5 py-2.5 rounded-2xl flex justify-between items-center border border-slate-800/60">
+                        <span class="text-slate-400 font-medium">Valence (유쾌도):</span>
+                        <span id="val-score" class="font-mono font-bold text-indigo-400">0.00</span>
+                    </div>
+                    <div class="bg-slate-900/80 px-3.5 py-2.5 rounded-2xl flex justify-between items-center border border-slate-800/60">
+                        <span class="text-slate-400 font-medium">Arousal (각성도):</span>
+                        <span id="val-arousal" class="font-mono font-bold text-pink-400">0.00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 푸터 -->
+    <footer class="w-full max-w-6xl mt-6 pt-4 border-t border-slate-800/80 text-center text-xs text-slate-500">
+        <p>실시간 안면 랜드마크 분석 AI | 러셀 감정 원형 모델 기반 자동 감정 매핑 시스템</p>
+    </footer>
+
+    <!-- 애플리케이션 로직 스크립트 -->
+    <script>
+        // DOM 요소 참조
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const statusBadge = document.getElementById('status-badge');
+        const statusText = document.getElementById('status-text');
+
+        // UI 표시 요소
+        const valBrow = document.getElementById('val-brow');
+        const barBrow = document.getElementById('bar-brow');
+        const valEye = document.getElementById('val-eye');
+        const barEye = document.getElementById('bar-eye');
+        const valMouth = document.getElementById('val-mouth');
+        const barMouth = document.getElementById('bar-mouth');
+
+        const emotionEmoji = document.getElementById('emotion-emoji');
+        const emotionTitle = document.getElementById('emotion-title');
+        const emotionDesc = document.getElementById('emotion-desc');
+        const emotionCode = document.getElementById('emotion-code');
+        const valScore = document.getElementById('val-score');
+        const valArousal = document.getElementById('val-arousal');
+
+        // 러셀 감정 모델 차트 초기화 (Chart.js Scatter)
+        const ctxChart = document.getElementById('russellChart').getContext('2d');
+        const russellChart = new Chart(ctxChart, {
+            type: 'scatter',
+            data: {
+                datasets: [{
+                    label: '현재 감정 상태',
+                    data: [{ x: 0, y: 0 }],
+                    backgroundColor: '#6366f1',
+                    borderColor: '#ffffff',
+                    borderWidth: 2,
+                    pointRadius: 9,
+                    pointHoverRadius: 11
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'center',
+                        min: -1,
+                        max: 1,
+                        grid: { 
+                            color: function(context) {
+                                if (context.tick.value === 0) return 'rgba(255, 255, 255, 0.35)';
+                                return 'rgba(100, 116, 139, 0.15)';
+                            },
+                            lineWidth: function(context) {
+                                return context.tick.value === 0 ? 2 : 1;
+                            }
+                        },
+                        ticks: { 
+                            color: '#94a3b8', 
+                            font: { size: 10, weight: 'bold' }, 
+                            stepSize: 0.5,
+                            callback: function(value) {
+                                if (value === 1) return 'High Valence (유쾌)';
+                                if (value === -1) return 'Low Valence (불쾌)';
+                                return '';
+                            }
+                        }
+                    },
+                    y: {
+                        type: 'linear',
+                        position: 'center',
+                        min: -1,
+                        max: 1,
+                        grid: { 
+                            color: function(context) {
+                                if (context.tick.value === 0) return 'rgba(255, 255, 255, 0.35)';
+                                return 'rgba(100, 116, 139, 0.15)';
+                            },
+                            lineWidth: function(context) {
+                                return context.tick.value === 0 ? 2 : 1;
+                            }
+                        },
+                        ticks: { 
+                            color: '#94a3b8', 
+                            font: { size: 10, weight: 'bold' }, 
+                            stepSize: 0.5,
+                            callback: function(value) {
+                                if (value === 1) return 'High Arousal (각성)';
+                                if (value === -1) return 'Low Arousal (이완)';
+                                return '';
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `Valence: ${context.parsed.x.toFixed(2)}, Arousal: ${context.parsed.y.toFixed(2)}`;
+                            }
+                        }
+                    }
+                }
+            },
+            plugins: [{
+                id: 'quadrantBackgrounds',
+                beforeDraw: (chart) => {
+                    const { ctx, chartArea: { left, top, right, bottom }, scales: { x, y } } = chart;
+                    const centerX = x.getPixelForValue(0);
+                    const centerY = y.getPixelForValue(0);
+
+                    ctx.save();
+                    
+                    // 1사분면 (High Arousal, High Valence): 흥분, 기쁨 (황금빛/주황빛 톤)
+                    ctx.fillStyle = 'rgba(245, 158, 11, 0.05)';
+                    ctx.fillRect(centerX, top, right - centerX, centerY - top);
+
+                    // 2사분면 (High Arousal, Low Valence): 스트레스, 분노, 놀람 (붉은빛 톤)
+                    ctx.fillStyle = 'rgba(239, 68, 68, 0.05)';
+                    ctx.fillRect(left, top, centerX - left, centerY - top);
+
+                    // 3사분면 (Low Arousal, Low Valence): 슬픔, 우울, 피로 (푸른빛 톤)
+                    ctx.fillStyle = 'rgba(59, 130, 246, 0.05)';
+                    ctx.fillRect(left, centerY, centerX - left, bottom - centerY);
+
+                    // 4사분면 (Low Arousal, High Valence): 평온, 만족, 편안함 (초록빛 톤)
+                    ctx.fillStyle = 'rgba(16, 185, 129, 0.05)';
+                    ctx.fillRect(centerX, centerY, right - centerX, bottom - centerY);
+
+                    // 사분면 라벨 텍스트 표시 (캔버스 반전의 영향 없이 올바르게 출력)
+                    ctx.font = '10px sans-serif';
+                    ctx.fillStyle = 'rgba(148, 163, 184, 0.4)';
+                    ctx.textAlign = 'center';
+                    
+                    ctx.fillText('흥분 / 기쁨 (Excited)', (centerX + right) / 2, top + 18);
+                    ctx.fillText('분노 / 긴장 (Tense/Angry)', (left + centerX) / 2, top + 18);
+                    ctx.fillText('슬픔 / 피로 (Sad/Depressed)', (left + centerX) / 2, bottom - 10);
+                    ctx.fillText('평온 / 편안함 (Calm/Relaxed)', (centerX + right) / 2, bottom - 10);
+
+                    ctx.restore();
+                }
+            }]
+        });
+
+        // MediaPipe FaceMesh 랜드마크 인덱스 정의
+        const LEFT_EYEBROW = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46];
+        const RIGHT_EYEBROW = [300, 293, 334, 296, 336, 285, 295, 282, 283, 276];
+        const LEFT_EYE = [33, 246, 161, 160, 159, 158, 157, 173, 133, 155, 154, 153, 145, 144, 163, 7];
+        const RIGHT_EYE = [362, 398, 384, 385, 386, 387, 388, 466, 263, 374, 380, 381, 382, 362];
+        const LIPS_OUTER = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291];
+
+        // 스무딩 및 기준선 보정 변수
+        let prevValence = 0;
+        let prevArousal = 0;
+        let baselineBrowY = null;
+        let baselineEyeAR = null;
+        let baselineMouthCornerDrop = null; // 입술 처짐 기준선 추가
+
+        // 거리 계산 헬퍼 함수
+        function getDistance(p1, p2) {
+            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        }
+
+        // 결과 처리 및 감정 분석 콜백
+        function onResults(results) {
+            if (canvasElement.width !== videoElement.videoWidth || canvasElement.height !== videoElement.videoHeight) {
+                canvasElement.width = videoElement.videoWidth || 640;
+                canvasElement.height = videoElement.videoHeight || 480;
+            }
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const landmarks = results.multiFaceLandmarks[0];
+                const w = canvasElement.width;
+                const h = canvasElement.height;
+
+                function drawPath(indices, color, closePath = false) {
+                    canvasCtx.strokeStyle = color;
+                    canvasCtx.lineWidth = 2;
+                    canvasCtx.beginPath();
+                    indices.forEach((idx, i) => {
+                        const pt = landmarks[idx];
+                        const x = pt.x * w;
+                        const y = pt.y * h;
+                        if (i === 0) canvasCtx.moveTo(x, y);
+                        else canvasCtx.lineTo(x, y);
+
+                        canvasCtx.fillStyle = color;
+                        canvasCtx.fillRect(x - 1.5, y - 1.5, 3, 3);
+                    });
+                    if (closePath) canvasCtx.closePath();
+                    canvasCtx.stroke();
+                }
+
+                drawPath(LEFT_EYEBROW, '#ec4899');
+                drawPath(RIGHT_EYEBROW, '#ec4899');
+                drawPath(LEFT_EYE, '#38bdf8', true);
+                drawPath(RIGHT_EYE, '#38bdf8', true);
+                drawPath(LIPS_OUTER, '#22d3ee', true);
+
+                const faceHeight = getDistance(landmarks[10], landmarks[152]);
+
+                // 1. 눈썹 상하 위치 분석 (기준선 대비: 낮으면 찌푸림(-), 높으면 눈 크게 뜸(+))
+                const leftBrowMid = landmarks[105];
+                const rightBrowMid = landmarks[334];
+                const currentBrowY = (leftBrowMid.y + rightBrowMid.y) / 2;
+                const noseRoot = landmarks[6];
+                const currentBrowToNoseDist = (noseRoot.y - currentBrowY) / faceHeight;
+
+                if (baselineBrowY === null) {
+                    baselineBrowY = currentBrowToNoseDist;
+                }
+
+                const browElevationDelta = currentBrowToNoseDist - baselineBrowY; // 양수면 올라감(눈 크게 뜸), 음수면 내려감(찌푸림)
+                const browLowerScore = Math.max(0, Math.min(1, -browElevationDelta * 12));
+                const browRaiseScore = Math.max(0, Math.min(1, browElevationDelta * 12));
+
+                // 2. 눈 개폐 크기 분석 (기본 중간값 기준, 커지거나 닫히는 정도 감지)
+                const leftEyeAR = (getDistance(landmarks[159], landmarks[145]) + getDistance(landmarks[158], landmarks[153])) / (2 * getDistance(landmarks[33], landmarks[133]));
+                const rightEyeAR = (getDistance(landmarks[386], landmarks[374]) + getDistance(landmarks[385], landmarks[381])) / (2 * getDistance(landmarks[362], landmarks[263]));
+                const avgEyeAR = (leftEyeAR + rightEyeAR) / 2;
+
+                if (baselineEyeAR === null) {
+                    baselineEyeAR = avgEyeAR;
+                }
+
+                const eyeDelta = avgEyeAR - baselineEyeAR; // 양수면 눈 커짐, 음수면 눈 닫힘/가늘어짐
+                const eyeWidenScore = Math.max(0, Math.min(1, eyeDelta * 15));
+                const eyeNarrowScore = Math.max(0, Math.min(1, -eyeDelta * 15));
+
+                // 3. 입꼬리 곡률 및 입 개방 분석 (입술 처짐 보강)
+                const mouthLeft = landmarks[61];
+                const mouthRight = landmarks[291];
+                const mouthTop = landmarks[13];
+                const mouthBottom = landmarks[14];
+                const upperLipCenter = landmarks[0]; // 인중 근처 윗입술 중앙
+                
+                const mouthCenterY = (mouthTop.y + mouthBottom.y) / 2;
+                const mouthCornerAvgY = (mouthLeft.y + mouthRight.y) / 2;
+                const smileCurvature = (mouthCenterY - mouthCornerAvgY) / (faceHeight * 0.1); 
+                const mouthOpenDist = getDistance(mouthTop, mouthBottom) / faceHeight;
+
+                // 입꼬리가 윗입술 중앙(또는 코/입 기준)보다 아래로 처지는 정도를 측정
+                const currentMouthCornerDrop = mouthCornerAvgY - upperLipCenter.y;
+                if (baselineMouthCornerDrop === null) {
+                    baselineMouthCornerDrop = currentMouthCornerDrop;
+                }
+                const mouthCornerDroopDelta = currentMouthCornerDrop - baselineMouthCornerDrop; // 양수일수록 입꼬리가 아래로 처짐
+                const mouthDroopScore = Math.max(0, Math.min(1, mouthCornerDroopDelta * 15));
+
+                // --- 러셀 감정 모델 (Valence & Arousal) 올바른 좌우 정렬 매핑 공식 ---
+                // Valence (유쾌도 -1 ~ 1): 미소가 올라갈수록 오른쪽(+), 입술이 처지거나 찌푸려지면 왼쪽(-) 방향
+                let targetValence = (smileCurvature * 1.8) - (browLowerScore * 0.7) + (browRaiseScore * 0.2) - (eyeNarrowScore * 0.3) - (mouthDroopScore * 1.2);
+                targetValence = Math.max(-1, Math.min(1, targetValence));
+
+                // Arousal (각성도 -1 ~ 1): 눈이 커지고 눈썹이 올라가거나 입이 벌어지면 위쪽(+) 방향
+                let targetArousal = (eyeWidenScore * 1.3) + (browRaiseScore * 1.2) + (browLowerScore * 0.8) + (mouthOpenDist * 2.2) - (eyeNarrowScore * 0.4) - (mouthDroopScore * 0.3);
+                targetArousal = Math.max(-1, Math.min(1, targetArousal));
+
+                // 스무딩 적용
+                const valence = prevValence * 0.6 + targetValence * 0.4;
+                const arousal = prevArousal * 0.6 + targetArousal * 0.4;
+                prevValence = valence;
+                prevArousal = arousal;
+
+                // --- UI 바 및 수치 업데이트 ---
+                const browDisplayVal = browElevationDelta; // 양수: 높음, 음수: 낮음
+                valBrow.textContent = browDisplayVal.toFixed(2);
+                barBrow.style.width = `${Math.min(100, Math.max(0, Math.round((browDisplayVal + 0.15) * 300)))}%`;
+
+                valEye.textContent = avgEyeAR.toFixed(2);
+                barEye.style.width = `${Math.min(100, Math.max(0, Math.round(50 + (eyeDelta * 250))))}%`;
+
+                valMouth.textContent = smileCurvature.toFixed(2);
+                barMouth.style.width = `${Math.min(100, Math.max(0, Math.round((smileCurvature + 0.3) * 120)))}%`;
+
+                valScore.textContent = valence.toFixed(2);
+                valArousal.textContent = arousal.toFixed(2);
+
+                // --- 세부 감정 분류 매핑 (입술 처짐에 따른 슬픔 감지 강화) ---
+                let emoji = "😐";
+                let title = "평온 / 무표정";
+                let desc = "안면 근육이 안정적이며 특별한 감정 자극이나 긴장이 없는 상태입니다.";
+                let code = "Neutral";
+
+                if (browRaiseScore > 0.45 || eyeWidenScore > 0.35) {
+                    if (mouthOpenDist > 0.08) {
+                        emoji = "😲";
+                        title = "놀람 / 경직";
+                        desc = "눈썹이 위로 올라가고 눈과 입이 크게 떠지며 놀람 또는 각성 상태를 보입니다.";
+                        code = "Surprise / Alert";
+                    } else {
+                        emoji = "🤩";
+                        title = "놀라움 및 흥분";
+                        desc = "눈썹이 높이 올라가며 호기심이나 즐거운 놀라움을 표현하고 있습니다.";
+                        code = "Amazed / Excited";
+                    }
+                } else if (mouthDroopScore > 0.18 || valence < -0.2) {
+                    // 입술 처짐이 감지되면 슬픔/우울 가중치를 높여 즉각 반영
+                    if (mouthDroopScore > 0.35) {
+                        emoji = "😭";
+                        title = "깊은 슬픔 / 우울";
+                        desc = "입꼬리가 뚜렷하게 아래로 처지며 슬픔이나 낙담한 감정이 강하게 드러납니다.";
+                        code = "Deep Sadness";
+                    } else {
+                        emoji = "😢";
+                        title = "슬픔 / 우울 / 피로";
+                        desc = "입꼬리가 처지고 안면 전반의 긴장이 풀린 우울 및 슬픔 상태입니다.";
+                        code = "Sadness / Fatigue";
+                    }
+                } else if (valence > 0.35 && arousal > 0.25) {
+                    if (mouthOpenDist > 0.08) {
+                        emoji = "😆";
+                        title = "매우 기쁨 / 환희";
+                        desc = "입을 크게 벌리고 웃으며 매우 유쾌하고 활기찬 최고조의 감정 상태입니다.";
+                        code = "Excited / Ecstasy";
+                    } else {
+                        emoji = "😊";
+                        title = "행복 / 미소";
+                        desc = "입꼬리가 부드럽게 올라가며 긍정적이고 온화한 유쾌함을 나타냅니다.";
+                        code = "Happy / Joy";
+                    }
+                } else if (valence > 0.2 && arousal <= 0.25) {
+                    emoji = "😌";
+                    title = "만족 / 편안함";
+                    desc = "이완된 눈과 부드러운 표정으로 마음의 평화와 안정감을 느끼고 있습니다.";
+                    code = "Calm / Relaxed";
+                } else if (browLowerScore > 0.4) {
+                    emoji = "😡";
+                    title = "분노 / 찡그림";
+                    desc = "눈썹이 아래로 내려와 찌푸려진 상태로 불쾌감과 긴장감을 나타냅니다.";
+                    code = "Anger / Frown";
+                }
+
+                // UI 반영
+                emotionEmoji.textContent = emoji;
+                emotionTitle.textContent = title;
+                emotionDesc.textContent = desc;
+                emotionCode.textContent = code;
+
+                // 차트 데이터 업데이트
+                russellChart.data.datasets[0].data = [{ x: valence, y: arousal }];
+                russellChart.update('none');
+
+                statusBadge.className = "flex items-center space-x-2 bg-emerald-500/10 text-emerald-400 px-4 py-2 rounded-full text-xs font-semibold border border-emerald-500/20 shadow-sm";
+                statusText.textContent = "정밀 감정 분석 트래킹 중";
+            } else {
+                statusBadge.className = "flex items-center space-x-2 bg-rose-500/10 text-rose-400 px-4 py-2 rounded-full text-xs font-semibold border border-rose-500/20 shadow-sm";
+                statusText.textContent = "얼굴을 카메라 정면에 위치시켜 주세요";
+            }
+
+            canvasCtx.restore();
+        }
+
+        // MediaPipe FaceMesh 초기화 및 실행
+        async function initFaceMesh() {
+            try {
+                const faceMesh = new FaceMesh({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+                });
+
+                faceMesh.setOptions({
+                    maxNumFaces: 1,
+                    refineLandmarks: true,
+                    minDetectionConfidence: 0.6,
+                    minTrackingConfidence: 0.6
+                });
+
+                faceMesh.onResults(onResults);
+
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await faceMesh.send({ image: videoElement });
+                    },
+                    width: 640,
+                    height: 480
+                });
+
+                await camera.start();
+                
+                loadingOverlay.style.opacity = '0';
+                setTimeout(() => loadingOverlay.style.display = 'none', 300);
+
+            } catch (error) {
+                console.error("웹캠 또는 FaceMesh 초기화 오류:", error);
+                statusText.textContent = "카메라 연결 또는 AI 로딩 실패";
+                loadingOverlay.innerHTML = `
+                    <p class="text-rose-400 font-semibold mb-1">웹캠 권한 오류 또는 초기화 실패</p>
+                    <p class="text-xs text-slate-400">브라우저 카메라 권한을 허용하고 페이지를 새로고침 해주세요.</p>
+                `;
+            }
+        }
+
+        window.addEventListener('load', () => {
+            setTimeout(initFaceMesh, 500);
+        });
+    </script>
+</body>
+</html>
